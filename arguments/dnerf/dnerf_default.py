@@ -24,5 +24,9 @@ ModelHiddenParams = dict(
     time_smoothness_weight = 0,
     l1_time_planes =  0,
     weight_decay_iteration=0,
-    bounds=1.6
+    bounds = 1.6,
+    no_grid = True,
+    no_pe = False,
+    pos_freq_bands=10,
+    time_freq_bands=6
 )

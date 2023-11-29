@@ -8,12 +8,69 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+from typing import Tuple
 
 import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
+
+
+# def raw2outputs(
+#   rgb: torch.Tensor,
+#   opacity: torch.Tensor,
+#   z_vals: torch.Tensor,
+#   rays_d: torch.Tensor,
+#   raw_noise_std: float = 0.0,
+#   white_bkgd: bool = False
+# ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+#   r"""
+#   Convert the raw NeRF output into RGB and other maps.
+#   """
+
+#   # Difference between consecutive elements of `z_vals`. [n_rays, n_samples]
+#   dists = z_vals[..., 1:] - z_vals[..., :-1]
+#   dists = torch.cat([dists, 1e10 * torch.ones_like(dists[..., :1])], dim=-1)
+
+#   # Multiply each distance by the norm of its corresponding direction ray
+#   # to convert to real world distance (accounts for non-unit directions).
+#   dists = dists * torch.norm(rays_d[..., None, :], dim=-1)
+
+#   # Add noise to model's predictions for density. Can be used to 
+#   # regularize network during training (prevents floater artifacts).
+#   noise = 0.
+#   if raw_noise_std > 0.:
+#     noise = torch.randn(raw[..., 3].shape) * raw_noise_std
+
+#   # Predict density of each sample along each ray. Higher values imply
+#   # higher likelihood of being absorbed at this point. [n_rays, n_samples]
+#   alpha = 1.0 - torch.exp(-nn.functional.relu(raw[..., 3] + noise) * dists)
+
+#   # Compute weight for RGB of each sample along each ray. [n_rays, n_samples]
+#   # The higher the alpha, the lower subsequent weights are driven.
+#   weights = alpha * cumprod_exclusive(1. - alpha + 1e-10)
+
+#   # Compute weighted RGB map.
+#   rgb = torch.sigmoid(raw[..., :3])  # [n_rays, n_samples, 3]
+#   rgb_map = torch.sum(weights[..., None] * rgb, dim=-2)  # [n_rays, 3]
+
+#   # Estimated depth map is predicted distance.
+#   depth_map = torch.sum(weights * z_vals, dim=-1)
+
+#   # Disparity map is inverse depth.
+#   disp_map = 1. / torch.max(1e-10 * torch.ones_like(depth_map),
+#                             depth_map / torch.sum(weights, -1))
+
+#   # Sum of weights along each ray. In [0, 1] up to numerical error.
+#   acc_map = torch.sum(weights, dim=-1)
+
+#   # To composite onto a white background, use the accumulated alpha map.
+#   if white_bkgd:
+#     rgb_map = rgb_map + (1. - acc_map[..., None])
+
+#   return rgb_map, depth_map, acc_map, weights
+
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, stage="fine"):
     """
@@ -46,7 +103,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center.cuda(),
         prefiltered=False,
-        # debug=pipe.debug
+        debug=pipe.debug
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -58,7 +115,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     time = torch.tensor(viewpoint_camera.time).to(means3D.device).repeat(means3D.shape[0],1)
     means2D = screenspace_points
     opacity = pc._opacity
-
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
     scales = None
@@ -73,17 +129,29 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if stage == "coarse" :
         means3D_deform, scales_deform, rotations_deform, opacity_deform = means3D, scales, rotations, opacity
     else:
-        means3D_deform, scales_deform, rotations_deform, opacity_deform = pc._deformation(means3D[deformation_point], scales[deformation_point], 
-                                                                         rotations[deformation_point], opacity[deformation_point],
-                                                                         time[deformation_point])
+        # ORIGINAL CODE
+        means3D_deform, scales_deform, rotations_deform, opacity_deform, rgb_deform = pc._deformation(means3D[deformation_point], scales[deformation_point], 
+                                                                                        rotations[deformation_point], opacity[deformation_point],
+                                                                                        time[deformation_point])
+        
+        # EXPERIMENTAL CODE
+            # means3D_deform, scales_deform, rotations_deform, opacity_deform = pc._deformation(means3D, scales, 
+            #                                                                                 rotations, opacity,
+            #                                                                                 time)
     # print(time.max())
-    with torch.no_grad():
-        pc._deformation_accum[deformation_point] += torch.abs(means3D_deform-means3D[deformation_point])
 
     means3D_final = torch.zeros_like(means3D)
     rotations_final = torch.zeros_like(rotations)
     scales_final = torch.zeros_like(scales)
     opacity_final = torch.zeros_like(opacity)
+    
+    # EXPERIMENTAL CODE
+    # means3D_final =  means3D_deform
+    # rotations_final =  rotations_deform
+    # scales_final =  scales_deform
+    # opacity_final = opacity_deform
+
+    # ORIGINAL CODE
     means3D_final[deformation_point] =  means3D_deform
     rotations_final[deformation_point] =  rotations_deform
     scales_final[deformation_point] =  scales_deform
@@ -95,7 +163,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     scales_final = pc.scaling_activation(scales_final)
     rotations_final = pc.rotation_activation(rotations_final)
-    opacity = pc.opacity_activation(opacity)
+    opacity = pc.opacity_activation(opacity_final)
     # print(opacity.max())
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -108,13 +176,15 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
             sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
             colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
+            if stage == 'fine':
+                colors_precomp[deformation_point] = colors_precomp[deformation_point] + rgb_deform
         else:
             shs = pc.get_features
     else:
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii, depth = rasterizer(
+    rendered_image, radii, depth, points_xy_image = rasterizer(
         means3D = means3D_final,
         means2D = means2D,
         shs = shs,
@@ -124,11 +194,19 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations = rotations_final,
         cov3D_precomp = cov3D_precomp)
 
+    if points_xy_image is not None:
+        print('SUCCESSFUL!')
+        print(f'THE SHAPE OF POINTS2D IS {points_xy_image.shape}')
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii,
-            "depth":depth}
+            "depth":depth,
+            "deformation_point": deformation_point,
+            "means3D": means3D,
+            "means3D_deform": means3D_deform,
+            "points2D": points_xy_image
+            }
 

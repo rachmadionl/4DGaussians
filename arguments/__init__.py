@@ -93,6 +93,9 @@ class ModelHiddenParams(ParamGroup):
         self.no_ds=False
         self.no_dr=False
         self.no_do=True
+        self.no_pe=True
+        self.pos_freq_bands=10
+        self.time_freq_bands=6
 
         
         super().__init__(parser, "ModelHiddenParams")

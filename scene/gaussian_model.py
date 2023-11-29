@@ -331,7 +331,7 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if len(group["params"]) > 1:
+            if len(group["params"]) > 1 or group['name']=='hash_encoding':
                 continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
@@ -367,7 +367,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if len(group["params"])>1:continue
+            if len(group["params"])>1 or group['name']=='hash_encoding':continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
             stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -494,9 +494,10 @@ class GaussianModel:
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
     @torch.no_grad()
-    def update_deformation_table(self,threshold):
+    def update_deformation_table(self,threshold=0.5):
         # print("origin deformation point nums:",self._deformation_table.sum())
-        self._deformation_table = torch.gt(self._deformation_accum.max(dim=-1).values/100,threshold)
+        self._deformation_table = torch.gt(self._deformation_accum, threshold)
+        self._deformation_table = torch.gt(self._deformation_table.sum(dim=-1), 0.0)
     def print_deformation_weight_grad(self):
         for name, weight in self._deformation.named_parameters():
             if weight.requires_grad:

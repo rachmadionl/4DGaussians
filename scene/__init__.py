@@ -42,15 +42,28 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
         self.video_cameras = {}
-        if os.path.exists(os.path.join(args.source_path, "sparse")):
+
+        if os.path.exists(os.path.join(args.source_path,"dataset.json")):
+            print('NERFIES DATASET IS USED!')
+            scene_info = sceneLoadTypeCallbacks["nerfies"](args.source_path, False, args.eval)
+        elif os.path.exists(os.path.join(args.source_path, 'mv_images')) or \
+            os.path.exists(os.path.join(args.source_path, 'gt')):
+            if 'DVS' in args.source_path:
+                print('NVIDIA DVS IS USED!')
+                scene_info = sceneLoadTypeCallbacks["nvidia-dvs"](args.source_path)
+            else:
+                print('NVIDIA NSFF IS USED!')
+                scene_info = sceneLoadTypeCallbacks["nvidia"](args.source_path)
+        elif os.path.exists(os.path.join(args.source_path, "sparse")):
+            print('COLMAP READER DATASET IS USED!')
+            print(f'EVAL IS {args.eval}')
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "poses_bounds.npy")):
+            print('DYNERF DATASET IS USED!')
             scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, args.white_background, args.eval)
-        elif os.path.exists(os.path.join(args.source_path,"dataset.json")):
-            scene_info = sceneLoadTypeCallbacks["nerfies"](args.source_path, False, args.eval)
         else:
             assert False, "Could not recognize scene type!"
         self.maxtime = scene_info.maxtime
@@ -86,6 +99,7 @@ class Scene:
         self.train_camera = FourDGSdataset(scene_info.train_cameras, args)
         print("Loading Test Cameras")
         self.test_camera = FourDGSdataset(scene_info.test_cameras, args)
+        print(f"LEN OF TEST CAMERA IS {len(self.test_camera)}")
         print("Loading Video Cameras")
         self.video_camera = cameraList_from_camInfos(scene_info.video_cameras,-1,args)
         xyz_max = scene_info.point_cloud.points.max(axis=0)

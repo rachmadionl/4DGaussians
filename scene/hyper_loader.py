@@ -5,6 +5,7 @@ warnings.filterwarnings("ignore")
 import json
 import os
 import random
+from typing import Optional
 
 import numpy as np
 import torch
@@ -30,6 +31,7 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     time : float
+    mask: Optional[np.array]
 
 
 class Load_hyper_data(Dataset):
@@ -132,7 +134,7 @@ class Load_hyper_data(Dataset):
         image_name = self.all_img[idx].split("/")[-1]
         caminfo = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=self.image_one_torch,
                               image_path=image_path, image_name=image_name, width=w, height=h, time=time,
-                              )
+                              mask=None)
         self.map[idx] = caminfo
         return caminfo  
     def load_raw(self, idx):
@@ -153,7 +155,7 @@ class Load_hyper_data(Dataset):
         image_name = self.all_img[idx].split("/")[-1]
         caminfo = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=w, height=h, time=time,
-                              )
+                              mask=None)
         self.map[idx] = caminfo
         return caminfo  
 
@@ -179,7 +181,7 @@ def format_hyper_data(data_class, split):
         image_name = data_class.all_img[index].split("/")[-1]
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=None,
                               image_path=image_path, image_name=image_name, width=int(data_class.w), height=int(data_class.h), time=time,
-                              )
+                              mask=None)
         cam_infos.append(cam_info)
     return cam_infos
         # matrix = np.linalg.inv(np.array(poses))

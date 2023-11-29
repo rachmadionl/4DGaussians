@@ -17,9 +17,12 @@ import lpips
 def lpips_loss(img1, img2, lpips_model):
     loss = lpips_model(img1,img2)
     return loss.mean()
-def l1_loss(network_output, gt):
+def l1_loss(network_output, gt, mask=None):
     return torch.abs((network_output - gt)).mean()
-
+    # else:
+    #     total_pixel = torch.sum(mask) + 1e-8
+    #     loss = torch.abs((network_output - gt) * mask).sum() / total_pixel
+    #     return loss
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
 

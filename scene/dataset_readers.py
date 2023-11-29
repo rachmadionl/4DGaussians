@@ -12,10 +12,11 @@
 import os
 import sys
 from PIL import Image
-from typing import NamedTuple
+from typing import NamedTuple, List
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
 from scene.hyper_loader import Load_hyper_data, format_hyper_data
+from scene.nvidia_loader import LoadNvidiaData, LoadNvidiaDVSData, format_nvidia_info
 import torchvision.transforms as transforms
 import copy
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
@@ -73,8 +74,32 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+def readColmapCamerasVal(valid_path: str, cam_infos_train: List[CameraInfo]):
+    import random
+    cam_info_tests = []
+    time_dirs = sorted(os.listdir(valid_path))
+    max_time = max([int(time) for time in time_dirs])
+    for idx, time_dir in enumerate(time_dirs):
+        view_images = os.path.join(valid_path, time_dir)
+        image_names = sorted(os.listdir(view_images))
+        time = int(time_dir) / max_time
+        cam_info = cam_infos_train[idx % 12]
+        for image_name in image_names:
+            image_path = os.path.join(view_images, image_name)
+            image_name = time_dir + '_' + os.path.basename(image_path).split(".")[0]
+            image = Image.open(image_path)
+            image = PILtoTorch(image,None)
+            cam_info_test = CameraInfo(uid=cam_info.uid, R=cam_info.R, T=cam_info.T, FovY=cam_info.FovY, FovX=cam_info.FovX, image=image,
+                                       image_path=image_path, image_name=image_name, width=cam_info.width, height=cam_info.height,
+                                       time = time)
+            cam_info_tests.append(cam_info_test)
+    # cam_info_tests = random.sample(cam_info_tests, 1)
+    return cam_info_tests
+    
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, center, furthest):
     cam_infos = []
+    max_time = max(cam_extrinsics.keys())
+    min_time = min(cam_extrinsics.keys())
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
         # the exact output you're looking for:
@@ -111,9 +136,10 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
         image = PILtoTorch(image,None)
+        time = (key - min_time) / (max_time - min_time)
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
-                              time = 0)
+                              time = time)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -124,7 +150,7 @@ def fetchPly(path):
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
     colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
-    return BasicPointCloud(points=positions, colors=colors, normals=normals)
+    return positions, colors, normals
 
 def storePly(path, xyz, rgb):
     # Define the dtype for the structured array
@@ -144,33 +170,9 @@ def storePly(path, xyz, rgb):
     ply_data.write(path)
 
 def readColmapSceneInfo(path, images, eval, llffhold=8):
-    try:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
-        cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
-        cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
-    except:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
-        cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
-        cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
-
-    reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
-    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
-
-    if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
-    else:
-        train_cam_infos = cam_infos
-        test_cam_infos = []
-
-    nerf_normalization = getNerfppNorm(train_cam_infos)
-
-    ply_path = os.path.join(path, "sparse/0/points3D.ply")
-    bin_path = os.path.join(path, "sparse/0/points3D.bin")
-    txt_path = os.path.join(path, "sparse/0/points3D.txt")
+    ply_path = os.path.join(path, "sparse/points3D.ply")
+    bin_path = os.path.join(path, "sparse/points3D.bin")
+    txt_path = os.path.join(path, "sparse/points3D.txt")
     if not os.path.exists(ply_path):
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
         try:
@@ -180,10 +182,41 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         storePly(ply_path, xyz, rgb)
     
     try:
-        pcd = fetchPly(ply_path)
+        positions, colors, normals = fetchPly(ply_path)
+        positions, center, furthest = normalize_pc(positions)
+        pcd = BasicPointCloud(points=positions, colors=colors, normals=normals)
         
     except:
         pcd = None
+    import copy
+    try:
+        cameras_extrinsic_file = os.path.join(path, "sparse", "images.bin")
+        cameras_intrinsic_file = os.path.join(path, "sparse", "cameras.bin")
+        cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
+        cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
+    except:
+        cameras_extrinsic_file = os.path.join(path, "sparse", "images.txt")
+        cameras_intrinsic_file = os.path.join(path, "sparse", "cameras.txt")
+        cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
+        cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
+
+    reading_dir = "images" if images == None else images
+    sorted_key = sorted(cam_extrinsics.keys())
+    cam_extrinsics = {i: cam_extrinsics[i] for i in sorted_key}
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
+                                           center=center,
+                                           furthest=furthest)
+    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+
+    if eval:
+        train_cam_infos = cam_infos
+        eval_path = os.path.join(path, "mv_images")
+        test_cam_infos = readColmapCamerasVal(eval_path, cam_infos[:12])
+    else:
+        train_cam_infos = cam_infos
+        test_cam_infos = []
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
@@ -325,7 +358,8 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
     storePly(ply_path, xyz, SH2RGB(shs) * 255)
     try:
-        pcd = fetchPly(ply_path)
+        positions, colors, normals = fetchPly(ply_path)
+        pcd = BasicPointCloud(points=positions, colors=colors, normals=normals)
     except:
         pcd = None
 
@@ -358,6 +392,14 @@ def format_infos(dataset,split):
     return cameras
 
 
+def normalize_pc(points):
+    centroid = np.mean(points, axis=0)
+    points -= centroid
+    furthest_distance = np.max(np.sqrt(np.sum(abs(points)**2,axis=-1)))
+    points /= furthest_distance
+    return points
+
+
 def readHyperDataInfos(datadir,use_bg_points,eval):
     train_cam_infos = Load_hyper_data(datadir,0.5,use_bg_points,split ="train")
     test_cam_infos = Load_hyper_data(datadir,0.5,use_bg_points,split="test")
@@ -368,14 +410,26 @@ def readHyperDataInfos(datadir,use_bg_points,eval):
     video_cam_infos.split="video"
 
     ply_path = os.path.join(datadir, "points.npy")
-
-    xyz = np.load(ply_path,allow_pickle=True)
-    xyz -= train_cam_infos.scene_center
-    xyz *= train_cam_infos.coord_scale
-    xyz = xyz.astype(np.float32)
-    shs = np.random.random((xyz.shape[0], 3)) / 255.0
-    pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((xyz.shape[0], 3)))
-
+    try:
+        xyz = np.load(ply_path,allow_pickle=True)
+        print(f'POINTS SHAPE IS {xyz.shape}')
+        xyz -= train_cam_infos.scene_center
+        xyz *= train_cam_infos.coord_scale
+        xyz = xyz.astype(np.float32)
+        shs = np.random.random((xyz.shape[0], 3)) / 255.0
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((xyz.shape[0], 3)))
+    except:
+        print('CONVERTING points3D.bin INTO .ply FILE!')
+        bin_path = '/home/rachmadio/dev/data/dynamic_scene_data_full/nvidia_data_full/Balloon1-2/dense/sparse/points3D.bin'
+        ply_path = os.path.join(datadir, "sparse/0", "points3D.ply")
+        # bin_path = os.path.join(datadir, "sparse/0", "points3D.bin")
+        xyz, rgb, _ = read_points3D_binary(bin_path)
+        storePly(ply_path, xyz, rgb)
+        positions, colors, normals = fetchPly(ply_path)
+        positions -= train_cam_infos.scene_center
+        positions *= train_cam_infos.coord_scale
+        positions = positions.astype(np.float32)
+        pcd = BasicPointCloud(points=positions, colors=colors, normals=normals)
 
     nerf_normalization = getNerfppNorm(train_cam)
 
@@ -389,6 +443,77 @@ def readHyperDataInfos(datadir,use_bg_points,eval):
                            )
 
     return scene_info
+
+
+def readNvidiaSceneInfo(basedir):
+    train_cam_infos = LoadNvidiaData(basedir, final_height=288, start_frame=0, end_frame=24, split='train')
+    test_cam_infos = LoadNvidiaData(basedir, final_height=288, start_frame=0, end_frame=24, split='test')
+
+    train_cam = format_nvidia_info(train_cam_infos)
+    max_time = train_cam_infos.max_time
+    video_cam_infos = copy.deepcopy(test_cam_infos)
+    video_cam_infos.split="video"
+
+    print('CONVERTING points3D.bin INTO .ply FILE!')
+    bin_path = os.path.join(basedir, 'sparse', 'points3D.bin')
+    ply_path = os.path.join(basedir, 'sparse', 'points3D.ply')
+    # bin_path = os.path.join(datadir, "sparse/0", "points3D.bin")
+    xyz, rgb, _ = read_points3D_binary(bin_path)
+    storePly(ply_path, xyz, rgb)
+    positions, colors, normals = fetchPly(ply_path)
+    positions = normalize_pc(positions)
+    positions = positions.astype(np.float32)
+    pcd = BasicPointCloud(points=positions, colors=colors, normals=normals)
+
+    nerf_normalization = getNerfppNorm(train_cam)
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           video_cameras=video_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path,
+                           maxtime=max_time
+                           )
+
+    return scene_info
+
+
+def readNvidiaDVSSceneInfo(basedir):
+    train_cam_infos = LoadNvidiaDVSData(basedir, ratio=0.5, start_frame=0, end_frame=12, split='train')
+    test_cam_infos = LoadNvidiaDVSData(basedir, ratio=0.5, start_frame=0, end_frame=12, split='test')
+
+    train_cam = format_nvidia_info(train_cam_infos)
+    max_time = train_cam_infos.max_time
+    video_cam_infos = copy.deepcopy(test_cam_infos)
+    video_cam_infos.split="video"
+
+    print('CONVERTING points3D.bin INTO .ply FILE!')
+    bin_path = os.path.join(basedir, 'sparse/0', 'points3D.bin')
+    ply_path = os.path.join(basedir, 'sparse/0', 'points3D.ply')
+    # bin_path = os.path.join(datadir, "sparse/0", "points3D.bin")
+    xyz, rgb, _ = read_points3D_binary(bin_path)
+    storePly(ply_path, xyz, rgb)
+    positions, colors, normals = fetchPly(ply_path)
+    positions = normalize_pc(positions)
+    positions = positions.astype(np.float32)
+    pcd = BasicPointCloud(points=positions, colors=colors, normals=normals)
+    # pcd = pcd._replace(points=np.concatenate([-pcd.points[:,0:1],-pcd.points[:,1:2],-pcd.points[:,2:3]],1) / train_cam_infos.scale_factor)
+
+    nerf_normalization = getNerfppNorm(train_cam)
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           video_cameras=video_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path,
+                           maxtime=max_time
+                           )
+
+    return scene_info
+
+
 def format_render_poses(poses,data_infos):
     cameras = []
     tensor_to_pil = transforms.ToPILImage()
@@ -478,6 +603,6 @@ sceneLoadTypeCallbacks = {
     "Blender" : readNerfSyntheticInfo,
     "dynerf" : readdynerfInfo,
     "nerfies": readHyperDataInfos,  # NeRFies & HyperNeRF dataset proposed by [https://github.com/google/hypernerf/releases/tag/v0.1]
-
-
+    "nvidia": readNvidiaSceneInfo,
+    "nvidia-dvs": readNvidiaDVSSceneInfo,
 }

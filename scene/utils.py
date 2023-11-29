@@ -108,6 +108,7 @@ class Camera:
                pixel_aspect_ratio: Union[np.ndarray, float] = 1.0,
                radial_distortion: Optional[np.ndarray] = None,
                tangential_distortion: Optional[np.ndarray] = None,
+               mask:  Optional[np.ndarray] = None,
                dtype=np.float32):
     """Constructor for camera class."""
     if radial_distortion is None:
@@ -125,6 +126,7 @@ class Camera:
     self.tangential_distortion = np.array(tangential_distortion, dtype)
     self.image_size = np.array(image_size, np.uint32)
     self.dtype = dtype
+    self.mask = mask
 
   @classmethod
   def from_json(cls, path: PathType):
@@ -148,6 +150,7 @@ class Camera:
         radial_distortion=np.asarray(camera_json['radial_distortion']),
         tangential_distortion=np.asarray(camera_json['tangential_distortion']),
         image_size=np.asarray(camera_json['image_size']),
+        mask=None,
     )
 
   def to_json(self):

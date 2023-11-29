@@ -1,13 +1,19 @@
-exp_name1=$1
+exp_name1=dnerf
 
 export CUDA_VISIBLE_DEVICES=0&&python metrics.py --model_path "output/$exp_name1/standup/"  &
-export CUDA_VISIBLE_DEVICES=1&&python metrics.py --model_path "output/$exp_name1/jumpingjacks/" &
-export CUDA_VISIBLE_DEVICES=2&&python metrics.py --model_path "output/$exp_name1/bouncingballs/" &
-export CUDA_VISIBLE_DEVICES=3&&python metrics.py --model_path "output/$exp_name1/lego/"   
-
+wait
+export CUDA_VISIBLE_DEVICES=0&&python metrics.py --model_path "output/$exp_name1/jumpingjacks/" &
+wait
+export CUDA_VISIBLE_DEVICES=0&&python metrics.py --model_path "output/$exp_name1/bouncingballs/" &
+wait
+export CUDA_VISIBLE_DEVICES=0&&python metrics.py --model_path "output/$exp_name1/lego/"   
+wait
 export CUDA_VISIBLE_DEVICES=0&&python metrics.py --model_path "output/$exp_name1/hellwarrior/"  &
-export CUDA_VISIBLE_DEVICES=1&&python metrics.py --model_path "output/$exp_name1/hook/" &
-export CUDA_VISIBLE_DEVICES=2&&python metrics.py --model_path "output/$exp_name1/trex/" &
-export CUDA_VISIBLE_DEVICES=3&&python metrics.py --model_path "output/$exp_name1/mutant/"   &
+wait
+export CUDA_VISIBLE_DEVICES=0&&python metrics.py --model_path "output/$exp_name1/hook/" &
+wait
+export CUDA_VISIBLE_DEVICES=0&&python metrics.py --model_path "output/$exp_name1/trex/" &
+wait
+export CUDA_VISIBLE_DEVICES=0&&python metrics.py --model_path "output/$exp_name1/mutant/"   &
 wait
 echo "Done"
