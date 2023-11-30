@@ -184,7 +184,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii, depth, points_xy_image = rasterizer(
+    rendered_image, radii, depth = rasterizer(
         means3D = means3D_final,
         means2D = means2D,
         shs = shs,
@@ -194,9 +194,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations = rotations_final,
         cov3D_precomp = cov3D_precomp)
 
-    if points_xy_image is not None:
-        print('SUCCESSFUL!')
-        print(f'THE SHAPE OF POINTS2D IS {points_xy_image.shape}')
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
@@ -206,7 +203,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "depth":depth,
             "deformation_point": deformation_point,
             "means3D": means3D,
-            "means3D_deform": means3D_deform,
-            "points2D": points_xy_image
+            "means3D_deform": means3D_deform
             }
 
