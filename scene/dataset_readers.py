@@ -41,6 +41,7 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     time : float
+    mask: np.array
    
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -276,9 +277,10 @@ def generateCamerasFromTransforms(path, template_transformsfile, extension, maxt
         fovy = focal2fov(fov2focal(fovx, image.shape[1]), image.shape[2])
         FovY = fovy 
         FovX = fovx
+        mask=None
         cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                             image_path=None, image_name=None, width=image.shape[1], height=image.shape[2],
-                            time = time))
+                            time = time, mask=mask))
     return cam_infos
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png", mapper = {}):
     cam_infos = []
@@ -311,10 +313,10 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             fovy = focal2fov(fov2focal(fovx, image.shape[1]), image.shape[2])
             FovY = fovy 
             FovX = fovx
-
+            mask=None
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                             image_path=image_path, image_name=image_name, width=image.shape[1], height=image.shape[2],
-                            time = time))
+                            time = time, mask=mask))
             
     return cam_infos
 def read_timeline(path):
@@ -480,8 +482,16 @@ def readNvidiaSceneInfo(basedir):
 
 
 def readNvidiaDVSSceneInfo(basedir):
-    train_cam_infos = LoadNvidiaDVSData(basedir, ratio=0.5, start_frame=0, end_frame=12, split='train')
-    test_cam_infos = LoadNvidiaDVSData(basedir, ratio=0.5, start_frame=0, end_frame=12, split='test')
+    which_nvidia = 'full'
+    if which_nvidia == 'full':
+        print('READING FULL DATA!')
+        start_frame = 0
+        end_frame = 192
+        train_cam_infos = LoadNvidiaDVSData(basedir, ratio=None, final_height=288, start_frame=start_frame, end_frame=end_frame, split='train', which_nvidia=which_nvidia)
+        test_cam_infos = LoadNvidiaDVSData(basedir, ratio=None, final_height=288, start_frame=start_frame, end_frame=end_frame, split='test', which_nvidia=which_nvidia)
+    else:
+        train_cam_infos = LoadNvidiaDVSData(basedir, ratio=0.5, start_frame=0, end_frame=12, split='train', which_nvidia=which_nvidia)
+        test_cam_infos = LoadNvidiaDVSData(basedir, ratio=0.5, start_frame=0, end_frame=12, split='test', which_nvidia=which_nvidia)
 
     train_cam = format_nvidia_info(train_cam_infos)
     max_time = train_cam_infos.max_time

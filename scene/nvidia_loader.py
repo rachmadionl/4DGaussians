@@ -43,7 +43,7 @@ def format_nvidia_info(dataset_class: Dataset):
     cam_infos = []
     for uid, index in tqdm(enumerate(range(data_idx))):
         time = dataset_class.all_time[index]
-        pose = dataset_class.poses[index]
+        pose = dataset_class.poses[index % 12]
         R = pose[:3,:3]
         R = -R
         R[:,0] = -R[:,0]
@@ -95,6 +95,7 @@ class LoadNvidiaData(Dataset):
         images = np.transpose(images, (0, 3, 1, 2))
         self.i_train = images
         self.i_train_files = imgfiles
+        print(f'TRAIN DATA LEN {len(self.i_train)}') 
 
         # Define Test data
         times = range(0, 24)
@@ -193,9 +194,63 @@ class LoadNvidiaDVSData(Dataset):
                  final_height: Optional[int] = None,
                  start_frame: int = 0,
                  end_frame: int = 12,
-                 split: str = 'train'
+                 split: str = 'train',
+                 which_nvidia: str = 'dvs'
                  ) -> None:
         super().__init__()
+        self.which_nvidia = which_nvidia
+        if which_nvidia == 'dvs':
+            self._init_dvs(basedir, ratio, final_height, start_frame, end_frame, split)
+        elif which_nvidia == 'full':
+            self._init_full(basedir, ratio, final_height, start_frame, end_frame, split)
+    
+    def _init_full(self, basedir, ratio, final_height, start_frame, end_frame, split):
+        images, poses, bds, imgfiles, scale_factor = load_llff_data(basedir, start_frame, end_frame,
+                                                      factor=int(1/ratio) if ratio is not None else None,
+                                                      final_height=final_height)
+        # Define Camera Params
+        poses = poses[:12, :, :]
+        hwf = poses[0,:3,-1]
+        poses = poses[:,:3,:4]
+        print(f'POSES SHAPE {poses.shape}')
+        height, width, focal = hwf
+        height, width = int(height), int(width)
+        self.poses = poses
+        self.height = height
+        self.width = width
+        self.focal = focal
+        self.scale_factor = scale_factor
+
+        # Define time
+        all_time = [i / (end_frame - 1) for i in range(start_frame, end_frame)]
+        max_time = end_frame - 1
+        self.max_time = max_time
+        self.all_time = all_time
+
+        images = np.transpose(images, (0, 3, 1, 2))
+        test_list = list(range(0, ((end_frame // 12) + 1) * 12, 12))
+
+        #Define Training data
+        self.i_train = images
+        self.i_train_files = imgfiles
+        mask_images = range(start_frame, end_frame)
+        mask_dir = os.path.join(basedir, 'dynamic_masks')
+        mask_path = [os.path.join(mask_dir, f'{img:01d}.png') for img in mask_images]
+        self.mask_path = mask_path
+        print(f'TRAIN DATA LEN {len(self.i_train)}') 
+        assert len(mask_path) == len(self.i_train_files)
+
+        # Define Test data
+        self.i_test = range(start_frame, end_frame)
+        test_dir = os.path.join(basedir, 'mv_images')
+        self.i_test_files = [os.path.join(test_dir, f'{time:05d}', 'cam01.jpg') for time in self.i_test]
+        print(f'TEST DATA LEN {len(self.i_test)}')
+
+        self.map_train = {}
+        self.map_test = {}
+        self.split = split
+
+    def _init_dvs(self, basedir, ratio, final_height, start_frame, end_frame, split):
         images, poses, bds, imgfiles, scale_factor = load_llff_data(basedir, start_frame, end_frame,
                                                       factor=int(1/ratio),
                                                       final_height=final_height)
@@ -271,7 +326,7 @@ class LoadNvidiaDVSData(Dataset):
 
         time = self.all_time[idx]
 
-        pose = np.array(self.poses[idx])
+        pose = np.array(self.poses[idx % 12])
         R = pose[:3,:3]
         R = -R
         R[:,0] = -R[:,0]
@@ -295,7 +350,10 @@ class LoadNvidiaDVSData(Dataset):
 
         image_path = self.i_test_files[idx]
         image = Image.open(image_path)
-        image = PILtoTorch(image, None).to(torch.float32)
+        if self.which_nvidia == 'full':
+            image = PILtoTorch(image,(self.width, self.height)).to(torch.float32)
+        elif self.which_nvidia == 'dvs':
+            image = PILtoTorch(image, None).to(torch.float32)
         assert self.i_train.shape[-2] == image.shape[-2]
         assert self.i_train.shape[-1] == image.shape[-1]
         time = self.i_test[idx]

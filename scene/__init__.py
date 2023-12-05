@@ -48,7 +48,7 @@ class Scene:
             scene_info = sceneLoadTypeCallbacks["nerfies"](args.source_path, False, args.eval)
         elif os.path.exists(os.path.join(args.source_path, 'mv_images')) or \
             os.path.exists(os.path.join(args.source_path, 'gt')):
-            if 'DVS' in args.source_path:
+            if 'DVS' in args.source_path or 'full' in args.source_path:
                 print('NVIDIA DVS IS USED!')
                 scene_info = sceneLoadTypeCallbacks["nvidia-dvs"](args.source_path)
             else:
